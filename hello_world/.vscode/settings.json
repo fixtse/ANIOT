@@ -1,0 +1,39 @@
+{
+  "C_Cpp.intelliSenseEngine": "default",
+  "idf.extensionActivationMode": "always",
+  "cmake.configureOnOpen": false,
+  "cmake.configureOnEdit": false,
+  "cmake.automaticReconfigure": false,
+  "cmake.autoSelectActiveFolder": false,
+  "cmake.options.advanced": {
+    "build": {
+      "statusBarVisibility": "inherit",
+      "inheritDefault": "hidden"
+    },
+    "launch": {
+      "statusBarVisibility": "inherit",
+      "inheritDefault": "hidden"
+    },
+    "debug": {
+      "statusBarVisibility": "inherit",
+      "inheritDefault": "hidden"
+    }
+  },
+  "idf.openOcdConfigs": [
+    "board/esp32c3-ftdi.cfg"
+  ],
+  "idf.port": "detect",
+  "idf.currentSetup": "/opt/esp/idf",
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32c3",
+    "IDF_PATH": "/opt/esp/idf",
+    "IDF_TOOLS_PATH": "/opt/esp",
+    "IDF_PYTHON_ENV_PATH": "/opt/esp/python_env/idf6.1_py3.12_env"
+  },
+  "clangd.path": "/opt/esp/tools/esp-clangd/esp-21.1.3_20260408/esp-clangd/bin/clangd",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=/home/coder/projects/ANIOT/hello_world/build"
+  ]
+}
