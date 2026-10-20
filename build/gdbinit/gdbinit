@@ -1,0 +1,2 @@
+source /home/coder/projects/ANIOT/build/gdbinit/symbols
+source /home/coder/projects/ANIOT/build/gdbinit/connect

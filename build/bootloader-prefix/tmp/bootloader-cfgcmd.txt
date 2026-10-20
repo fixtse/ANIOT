@@ -1,0 +1,1 @@
+cmd='/opt/esp/tools/cmake/4.0.3/bin/cmake;-DSDKCONFIG=/home/coder/projects/ANIOT/hello_world/sdkconfig;-DIDF_PATH=/opt/esp/idf;-DIDF_TARGET=esp32c3;-DPYTHON_DEPS_CHECKED=1;-DPYTHON=python;-DEXTRA_COMPONENT_DIRS=;-DPROJECT_SOURCE_DIR=/home/coder/projects/ANIOT/hello_world;-DIGNORE_EXTRA_COMPONENT=;-DIDF_BUILD_V2=;-GNinja;-S;<SOURCE_DIR><SOURCE_SUBDIR>;-B;<BINARY_DIR>'
