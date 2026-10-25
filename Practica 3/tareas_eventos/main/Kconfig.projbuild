@@ -1,0 +1,11 @@
+menu "Lab 3 Sensor Configuration"
+
+    config SENSOR_SAMPLE_INTERVAL
+        int "Sensor Sampling Interval (seconds)"
+        range 1 3600
+        default 5
+        help
+            Defines the time interval in seconds between consecutive SHTC3 temperature 
+            and humidity samples during monitoring mode.
+
+endmenu
