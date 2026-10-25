@@ -8,4 +8,11 @@ menu "Lab 3 Sensor Configuration"
             Defines the time interval in seconds between consecutive SHTC3 temperature 
             and humidity samples during monitoring mode.
 
+    config NBUTTON
+        int "Button polling interval nbutton (seconds)"
+        range 1 3600
+        default 1
+        help
+            Interval between GPIO button checks.
+
 endmenu

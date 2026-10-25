@@ -1,14 +1,19 @@
 #include <stdio.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "esp_console.h"
-#include "linenoise/linenoise.h"
-#include "driver/gpio.h"
+#include "button.h"
 #include "driver/i2c_master.h"
 #include "sdkconfig.h"
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+#include "driver/usb_serial_jtag.h"
+#include "driver/usb_serial_jtag_vfs.h"
+#endif
 
 #include "shtc3.h"
 #include "simulated_wifi.h"
@@ -25,6 +30,13 @@ static volatile system_mode_t current_mode = MODE_MONITORING;
 static shtc3_t tempSensor;
 static i2c_master_bus_handle_t bus_handle;
 static TaskHandle_t system_task_handle = NULL; // Task handle for suspension
+static TaskHandle_t main_task_handle;
+
+static void button_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data) {
+    if (current_mode == MODE_MONITORING) {
+        xTaskNotifyGive(main_task_handle);
+    }
+}
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     if (event_base == WIFI_SIM_EVENT) {
@@ -79,17 +91,6 @@ void register_console_commands(void) {
 
 #define BOOT_BUTTON_PIN 9
 
-void init_boot_button(void) {
-    gpio_config_t io_conf = {
-        .intr_type = GPIO_INTR_DISABLE,
-        .mode = GPIO_MODE_INPUT,
-        .pin_bit_mask = (1ULL << BOOT_BUTTON_PIN),
-        .pull_down_en = 0,
-        .pull_up_en = 1,
-    };
-    gpio_config(&io_conf);
-}
-
 static void system_task(void *pvParameter) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     const TickType_t xFrequency = pdMS_TO_TICKS(CONFIG_SENSOR_SAMPLE_INTERVAL * 1000);
@@ -115,9 +116,18 @@ static void system_task(void *pvParameter) {
 void app_main(void) {
     ESP_LOGI(TAG, "Starting Lab 3 Structured Application...");
 
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+    // Buffer incoming USB bytes with the interrupt-driven console driver.
+    usb_serial_jtag_driver_config_t usb_config = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb_config));
+    usb_serial_jtag_vfs_use_driver();
+#endif
+
+    int stdin_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, stdin_flags | O_NONBLOCK);
+
     flash_sim_init(100); 
     simulated_wifi_init();
-    init_boot_button();
 
     i2c_master_bus_config_t i2c_bus_config = {
         .clk_source = I2C_CLK_SRC_DEFAULT,
@@ -147,57 +157,79 @@ void app_main(void) {
     wifi_connect();
     xTaskCreate(system_task, "system_task", 4096, NULL, 5, &system_task_handle);
 
+    main_task_handle = xTaskGetCurrentTaskHandle();
+    ESP_ERROR_CHECK(esp_event_handler_register(BUTTON_EVENT, BUTTON_PRESSED,
+                                               button_event_handler, NULL));
+    ESP_ERROR_CHECK(button_init(BOOT_BUTTON_PIN, CONFIG_NBUTTON));
+    printf("Monitoring: send 'b' over serial to simulate a BOOT button press.\n");
+
     // Main Loop handling Modes and Button Press
     while (1) {
         if (current_mode == MODE_MONITORING) {
-            vTaskDelay(pdMS_TO_TICKS(200));
-
-            if (gpio_get_level(BOOT_BUTTON_PIN) == 0) {
-                vTaskDelay(pdMS_TO_TICKS(50)); // Debounce
-                if (gpio_get_level(BOOT_BUTTON_PIN) == 0) {
-                    ESP_LOGI(TAG, "BOOT button pressed! Switching to Console Mode.");
-                    current_mode = MODE_CONSOLE;
-
-                    if (system_task_handle != NULL) {
-                        vTaskSuspend(system_task_handle);
-                    }
-
-                    while (gpio_get_level(BOOT_BUTTON_PIN) == 0) {
-                        vTaskDelay(pdMS_TO_TICKS(50));
-                    }
+            // Keep USB RX available and allow remote button simulation.
+            char input[64];
+            ssize_t received = read(STDIN_FILENO, input, sizeof(input));
+            for (ssize_t i = 0; i < received; ++i) {
+                if (input[i] == 'b' || input[i] == 'B') {
+                    ESP_ERROR_CHECK(button_simulate_press());
+                    break;
                 }
+            }
+            if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20)) == 0) {
+                continue;
+            }
+            ESP_LOGI(TAG, "Button event received! Switching to Console Mode.");
+            current_mode = MODE_CONSOLE;
+            if (system_task_handle != NULL) {
+                vTaskSuspend(system_task_handle);
             }
         } else if (current_mode == MODE_CONSOLE) {
             wifi_disconnect();
-            printf("\n--- Entrando en modo consola ---\n");
-            printf("Escribe 'help' para ver los comandos. Volviendo en 10 segundos...\n");
-            
-            int countdown = 10;
-            while (countdown > 0 && current_mode == MODE_CONSOLE) {
-                char* line = linenoise("consola> ");
-                if (line == NULL) { 
-                    vTaskDelay(pdMS_TO_TICKS(1000));
-                    countdown--;
-                    continue; 
+            printf("\nEntrando en modo consola\n");
+            printf("Escribe 'help' para ver los comandos.\n");
+
+            int64_t deadline = esp_timer_get_time() + 10 * 1000000LL;
+            char line[256];
+            size_t length = 0;
+            printf("consola> ");
+            while (current_mode == MODE_CONSOLE) {
+                int64_t remaining_us = deadline - esp_timer_get_time();
+                if (remaining_us <= 0) {
+                    break;
                 }
-                linenoiseHistoryAdd(line);
-                
-                int ret;
-                esp_err_t err = esp_console_run(line, &ret);
-                if (err == ESP_ERR_NOT_FOUND) {
-                    printf("Comando desconocido. Escribe 'help'\n");
+
+                char c;
+                if (read(STDIN_FILENO, &c, 1) == 1) {
+                    if (c == '\n' || c == '\r') {
+                        printf("\n");
+                        line[length] = '\0';
+                        if (length > 0) {
+                            int ret;
+                            esp_err_t err = esp_console_run(line, &ret);
+                            if (err == ESP_ERR_NOT_FOUND) {
+                                printf("Comando desconocido. Escribe 'help'\n");
+                            }
+                        }
+                        length = 0;
+                        if (current_mode == MODE_CONSOLE) {
+                            printf("consola> ");
+                        }
+                    } else if (c == '\b' || c == 127) {
+                        if (length > 0) {
+                            length--;
+                            printf("\b \b");
+                        }
+                    } else if (c >= 32 && c < 127 && length < sizeof(line) - 1) {
+                        line[length++] = c;
+                        putchar(c);
+                    }
+                } else {
+                    vTaskDelay(pdMS_TO_TICKS(20));
                 }
-                linenoiseFree(line);
-                countdown--;
             }
-            
             if (current_mode == MODE_CONSOLE) {
-                printf("Tiempo de consola agotado. Volviendo a monitorización...\n");
-                current_mode = MODE_MONITORING;
-                wifi_connect();
-                if (system_task_handle != NULL) {
-                    vTaskResume(system_task_handle);
-                }
+                printf("\nTiempo de consola agotado.\n");
+                cmd_monitor(0, NULL);
             }
         }
     }
