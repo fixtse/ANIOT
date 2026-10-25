@@ -1,7 +1,5 @@
 #include <stdio.h>
 #include <string.h>
-#include <fcntl.h>
-#include <unistd.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
@@ -10,10 +8,6 @@
 #include "button.h"
 #include "driver/i2c_master.h"
 #include "sdkconfig.h"
-#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
-#include "driver/usb_serial_jtag.h"
-#include "driver/usb_serial_jtag_vfs.h"
-#endif
 
 #include "shtc3.h"
 #include "simulated_wifi.h"
@@ -31,6 +25,7 @@ static shtc3_t tempSensor;
 static i2c_master_bus_handle_t bus_handle;
 static TaskHandle_t system_task_handle = NULL; // Se suspende durante el modo consola para detener las lecturas.
 static TaskHandle_t main_task_handle;
+static esp_console_repl_t *console_repl;
 
 static void button_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data) {
     // El componente del botón notifica la pulsación; la tarea principal realiza el cambio de modo.
@@ -82,13 +77,35 @@ static int cmd_quota(int argc, char **argv) {
 }
 
 void register_console_commands(void) {
-    ESP_ERROR_CHECK(esp_console_register_help_command());
-
     const esp_console_cmd_t monitor_cmd = { .command = "monitor", .help = "Return to monitoring mode", .func = &cmd_monitor };
     const esp_console_cmd_t quota_cmd = { .command = "quota", .help = "Check pending flash bytes", .func = &cmd_quota };
     
-    esp_console_cmd_register(&monitor_cmd);
-    esp_console_cmd_register(&quota_cmd);
+    ESP_ERROR_CHECK(esp_console_cmd_register(&monitor_cmd));
+    ESP_ERROR_CHECK(esp_console_cmd_register(&quota_cmd));
+}
+
+static void start_console(void) {
+    esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
+    repl_config.prompt = "consola> ";
+    repl_config.max_cmdline_length = 256;
+    repl_config.max_cmdline_args = 8;
+
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+    esp_console_dev_usb_serial_jtag_config_t hw_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_config, &repl_config, &console_repl));
+#else
+    ESP_ERROR_CHECK(esp_console_new_repl_stdio(&repl_config, &console_repl));
+#endif
+    ESP_ERROR_CHECK(esp_console_register_help_command());
+    register_console_commands();
+    ESP_ERROR_CHECK(esp_console_start_repl(console_repl));
+}
+
+static void stop_console(void) {
+    if (console_repl != NULL) {
+        ESP_ERROR_CHECK(esp_console_stop_repl(console_repl));
+        console_repl = NULL;
+    }
 }
 
 #define BOOT_BUTTON_PIN 9
@@ -120,17 +137,6 @@ static void system_task(void *pvParameter) {
 void app_main(void) {
     ESP_LOGI(TAG, "Starting Lab 3 Structured Application...");
 
-#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
-    // Buffer incoming USB bytes with the interrupt-driven console driver.
-    usb_serial_jtag_driver_config_t usb_config = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb_config));
-    usb_serial_jtag_vfs_use_driver();
-#endif
-
-    // La lectura no bloqueante permite atender a la vez la consola y los eventos.
-    int stdin_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
-    fcntl(STDIN_FILENO, F_SETFL, stdin_flags | O_NONBLOCK);
-
     flash_sim_init(100); 
     simulated_wifi_init();
 
@@ -148,16 +154,8 @@ void app_main(void) {
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_SIM_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
 
-    esp_console_config_t console_config = {
-        .max_cmdline_args = 8,
-        .max_cmdline_length = 256,
-    };
-    ESP_ERROR_CHECK(esp_console_init(&console_config));
-    
     setvbuf(stdin, NULL, _IONBF, 0);
     setvbuf(stdout, NULL, _IONBF, 0);
-
-    register_console_commands();
 
     wifi_connect();
     xTaskCreate(system_task, "system_task", 4096, NULL, 5, &system_task_handle);
@@ -166,77 +164,32 @@ void app_main(void) {
     ESP_ERROR_CHECK(esp_event_handler_register(BUTTON_EVENT, BUTTON_PRESSED,
                                                button_event_handler, NULL));
     ESP_ERROR_CHECK(button_init(BOOT_BUTTON_PIN, CONFIG_NBUTTON));
-    printf("Monitoring: send 'b' over serial to simulate a BOOT button press.\n");
+    printf("Monitoring: press the BOOT button to enter console mode.\n");
 
     // La aplicación alterna entre monitorización y consola al recibir el evento del botón.
     while (1) {
         if (current_mode == MODE_MONITORING) {
-            // Lee el terminal sin bloquear; 'b' permite simular una pulsación del botón.
-            char input[64];
-            ssize_t received = read(STDIN_FILENO, input, sizeof(input));
-            for (ssize_t i = 0; i < received; ++i) {
-                if (input[i] == 'b' || input[i] == 'B') {
-                    ESP_ERROR_CHECK(button_simulate_press());
-                    break;
-                }
-            }
-            if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20)) == 0) {
-                continue;
-            }
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
             ESP_LOGI(TAG, "Button event received! Switching to Console Mode.");
             current_mode = MODE_CONSOLE;
             if (system_task_handle != NULL) {
                 vTaskSuspend(system_task_handle);
             }
-        } else if (current_mode == MODE_CONSOLE) {
-            // La consola detiene el muestreo, desconecta WiFi y limita su uso a 10 segundos.
             wifi_disconnect();
             printf("\nEntrando en modo consola\n");
             printf("Escribe 'help' para ver los comandos.\n");
-
+            start_console();
             int64_t deadline = esp_timer_get_time() + 10 * 1000000LL;
-            char line[256];
-            size_t length = 0;
-            printf("consola> ");
-            while (current_mode == MODE_CONSOLE) {
-                int64_t remaining_us = deadline - esp_timer_get_time();
-                if (remaining_us <= 0) {
-                    break;
-                }
-
-                char c;
-                if (read(STDIN_FILENO, &c, 1) == 1) {
-                    if (c == '\n' || c == '\r') {
-                        printf("\n");
-                        line[length] = '\0';
-                        if (length > 0) {
-                            int ret;
-                            esp_err_t err = esp_console_run(line, &ret);
-                            if (err == ESP_ERR_NOT_FOUND) {
-                                printf("Comando desconocido. Escribe 'help'\n");
-                            }
-                        }
-                        length = 0;
-                        if (current_mode == MODE_CONSOLE) {
-                            printf("consola> ");
-                        }
-                    } else if (c == '\b' || c == 127) {
-                        if (length > 0) {
-                            length--;
-                            printf("\b \b");
-                        }
-                    } else if (c >= 32 && c < 127 && length < sizeof(line) - 1) {
-                        line[length++] = c;
-                        putchar(c);
-                    }
-                } else {
-                    vTaskDelay(pdMS_TO_TICKS(20));
-                }
+            while (current_mode == MODE_CONSOLE && esp_timer_get_time() < deadline) {
+                vTaskDelay(pdMS_TO_TICKS(50));
             }
+            stop_console();
             if (current_mode == MODE_CONSOLE) {
                 printf("\nTiempo de consola agotado.\n");
                 cmd_monitor(0, NULL);
             }
+        } else if (current_mode == MODE_CONSOLE) {
+            vTaskDelay(pdMS_TO_TICKS(20));
         }
     }
 }
