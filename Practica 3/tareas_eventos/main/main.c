@@ -29,10 +29,11 @@ typedef enum {
 static volatile system_mode_t current_mode = MODE_MONITORING;
 static shtc3_t tempSensor;
 static i2c_master_bus_handle_t bus_handle;
-static TaskHandle_t system_task_handle = NULL; // Task handle for suspension
+static TaskHandle_t system_task_handle = NULL; // Se suspende durante el modo consola para detener las lecturas.
 static TaskHandle_t main_task_handle;
 
 static void button_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data) {
+    // El componente del botón notifica la pulsación; la tarea principal realiza el cambio de modo.
     if (current_mode == MODE_MONITORING) {
         xTaskNotifyGive(main_task_handle);
     }
@@ -46,6 +47,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
                 break;
             case WIFI_SIM_EVENT_IP_ACQUIRED:
                 ESP_LOGI(TAG, "Event: IP Acquired! Flushing flash buffer...");
+                // Al obtener IP, se vacía en orden la cola circular de medidas pendientes.
                 while (getDataLeft() > 0) {
                     float *val = (float*)readFromFlash(sizeof(float));
                     if (val) {
@@ -93,6 +95,7 @@ void register_console_commands(void) {
 
 static void system_task(void *pvParameter) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
+    // El periodo de muestreo se selecciona desde menuconfig.
     const TickType_t xFrequency = pdMS_TO_TICKS(CONFIG_SENSOR_SAMPLE_INTERVAL * 1000);
 
     while (1) {
@@ -100,6 +103,7 @@ static void system_task(void *pvParameter) {
         if (shtc3_get_temp_and_hum(&tempSensor, &temp, &hum) == 0) {
             ESP_LOGI(TAG, "Sampled Temp: %.2f °C | Humidity: %.2f %%", temp, hum);
             
+            // Sin IP, cada temperatura se conserva en el componente de flash simulado.
             if (is_wifi_ready()) {
                 char msg[32];
                 snprintf(msg, sizeof(msg), "%.2f", temp);
@@ -123,6 +127,7 @@ void app_main(void) {
     usb_serial_jtag_vfs_use_driver();
 #endif
 
+    // La lectura no bloqueante permite atender a la vez la consola y los eventos.
     int stdin_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
     fcntl(STDIN_FILENO, F_SETFL, stdin_flags | O_NONBLOCK);
 
@@ -163,10 +168,10 @@ void app_main(void) {
     ESP_ERROR_CHECK(button_init(BOOT_BUTTON_PIN, CONFIG_NBUTTON));
     printf("Monitoring: send 'b' over serial to simulate a BOOT button press.\n");
 
-    // Main Loop handling Modes and Button Press
+    // La aplicación alterna entre monitorización y consola al recibir el evento del botón.
     while (1) {
         if (current_mode == MODE_MONITORING) {
-            // Keep USB RX available and allow remote button simulation.
+            // Lee el terminal sin bloquear; 'b' permite simular una pulsación del botón.
             char input[64];
             ssize_t received = read(STDIN_FILENO, input, sizeof(input));
             for (ssize_t i = 0; i < received; ++i) {
@@ -184,6 +189,7 @@ void app_main(void) {
                 vTaskSuspend(system_task_handle);
             }
         } else if (current_mode == MODE_CONSOLE) {
+            // La consola detiene el muestreo, desconecta WiFi y limita su uso a 10 segundos.
             wifi_disconnect();
             printf("\nEntrando en modo consola\n");
             printf("Escribe 'help' para ver los comandos.\n");

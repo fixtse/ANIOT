@@ -28,6 +28,7 @@ void flash_sim_init(size_t capacity_bytes)
 
 int writeToFlash(const void *data, size_t size)
 {
+    // La cola circular añade cada bloque al final y rechaza escrituras si no hay espacio.
     if (data == NULL || size == 0 || buffer == NULL || size > capacity - used) {
         return -1;
     }
@@ -42,6 +43,7 @@ int writeToFlash(const void *data, size_t size)
 
 void *readFromFlash(size_t size)
 {
+    // Devuelve el bloque más antiguo y libera esos bytes para escrituras posteriores.
     if (size == 0 || size > used || read_buffer == NULL) {
         return NULL;
     }

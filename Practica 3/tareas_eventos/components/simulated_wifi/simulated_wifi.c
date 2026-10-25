@@ -11,7 +11,7 @@ static bool s_ip_acquired = false;
 
 static void wifi_simulation_task(void *pvParameters) {
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(15000)); // Simulate connection lifecycle
+        vTaskDelay(pdMS_TO_TICKS(15000)); // Simula la espera hasta obtener IP tras conectar.
         if (s_connected && !s_ip_acquired) {
             s_ip_acquired = true;
             ESP_LOGI(TAG, "IP Acquired!");
@@ -26,7 +26,7 @@ void simulated_wifi_init(void) {
 
 esp_err_t wifi_connect(void) {
     ESP_LOGI(TAG, "Connecting to simulated Wi-Fi...");
-    vTaskDelay(pdMS_TO_TICKS(1000)); // Simulate connection latency
+    vTaskDelay(pdMS_TO_TICKS(1000)); // Latencia fija de conexión de la WiFi simulada.
     s_connected = true;
     s_ip_acquired = false;
     esp_event_post(WIFI_SIM_EVENT, WIFI_SIM_EVENT_CONNECTED, NULL, 0, portMAX_DELAY);

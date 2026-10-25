@@ -4,7 +4,7 @@
 #include "esp_err.h"
 #include "esp_event.h"
 
-// Declare Event Base and IDs
+// Eventos de conexión WiFi e IP disponibles para los componentes consumidores.
 ESP_EVENT_DECLARE_BASE(WIFI_SIM_EVENT);
 
 enum {

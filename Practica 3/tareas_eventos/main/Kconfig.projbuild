@@ -1,18 +1,18 @@
-menu "Lab 3 Sensor Configuration"
+menu "Configuración del sensor y del botón"
 
     config SENSOR_SAMPLE_INTERVAL
-        int "Sensor Sampling Interval (seconds)"
+        int "Intervalo de muestreo del sensor (segundos)"
         range 1 3600
         default 5
         help
-            Defines the time interval in seconds between consecutive SHTC3 temperature 
-            and humidity samples during monitoring mode.
+            Tiempo entre lecturas consecutivas de temperatura y humedad del SHTC3
+            durante el modo de monitorización.
 
     config NBUTTON
-        int "Button polling interval nbutton (seconds)"
+        int "Intervalo de sondeo del botón nbutton (segundos)"
         range 1 3600
         default 1
         help
-            Interval between GPIO button checks.
+            Tiempo entre comprobaciones del estado del botón GPIO.
 
 endmenu

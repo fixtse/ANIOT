@@ -8,5 +8,5 @@ enum { BUTTON_PRESSED };
 
 esp_err_t button_init(gpio_num_t pin, unsigned int interval_seconds);
 
-// Post the same event as a physical press. Call from task context after init.
+// Publica el mismo evento que una pulsación física; llamar desde una tarea tras la inicialización.
 esp_err_t button_simulate_press(void);
