@@ -9,10 +9,11 @@ menu "Configuración del sensor y del botón"
             durante el modo de monitorización.
 
     config NBUTTON
-        int "Intervalo de sondeo del botón nbutton (segundos)"
-        range 1 3600
-        default 1
+        int "Intervalo de sondeo del botón (milisegundos)"
+        range 10 1000
+        default 20
         help
-            Tiempo entre comprobaciones del estado del botón GPIO.
+            Tiempo entre comprobaciones del estado del botón GPIO. Un valor
+            bajo reduce la posibilidad de perder pulsaciones breves.
 
 endmenu

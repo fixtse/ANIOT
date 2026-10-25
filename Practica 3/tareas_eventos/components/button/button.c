@@ -30,9 +30,9 @@ static void button_task(void *arg)
     }
 }
 
-esp_err_t button_init(gpio_num_t pin, unsigned int interval_seconds)
+esp_err_t button_init(gpio_num_t pin, unsigned int interval_ms)
 {
-    if (interval_seconds == 0) {
+    if (interval_ms == 0) {
         return ESP_ERR_INVALID_ARG;
     }
     const gpio_config_t config = {
@@ -47,7 +47,7 @@ esp_err_t button_init(gpio_num_t pin, unsigned int interval_seconds)
         return err;
     }
     button_pin = pin;
-    poll_interval = pdMS_TO_TICKS(interval_seconds * 1000);
+    poll_interval = pdMS_TO_TICKS(interval_ms);
     return xTaskCreate(button_task, "button", 2048, NULL, 5, NULL) == pdPASS
                ? ESP_OK : ESP_ERR_NO_MEM;
 }
